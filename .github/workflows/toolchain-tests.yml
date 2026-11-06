@@ -19,6 +19,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Checker and estate number
-        run: node --test toolchain/
+        run: node --test toolchain/*.test.mjs
       - name: Bump script parses
         run: bash -n toolchain/bump-playwright.sh

@@ -39,6 +39,10 @@ for site in $sites; do
   echo "== $site"
   dir="$work/$site"
   gh repo clone "$org/$site" "$dir" -- --quiet --depth 1
+  if git ls-remote --exit-code --heads "https://github.com/$org/$site.git" "$branch" >/dev/null; then
+    echo "   $branch already exists on GitHub, skipped (open its PR by hand if missing)"
+    continue
+  fi
   if (cd "$dir" && node "$here/check-playwright.mjs" "$work/target.json" >/dev/null); then
     echo "   already on $version, nothing to do"
     continue
@@ -60,7 +64,7 @@ Moves @playwright/test, playwright and playwright-core to $version as set in
 neckarshore-websites/.github toolchain/toolchain.json, so every website uses
 one browser build. Opened by toolchain/bump-playwright.sh."
     git push -q -u origin "$branch"
-    gh pr create --title "chore(test): Playwright $version, the estate number" --body "Moves Playwright to **$version**, the number in [toolchain.json](https://github.com/$org/.github/blob/main/toolchain/toolchain.json). Lockfile only; the full e2e suite of this site runs on this PR.
+    gh pr create --repo "$org/$site" --base main --head "$branch" --title "chore(test): Playwright $version, the estate number" --body "Moves Playwright to **$version**, the number in [toolchain.json](https://github.com/$org/.github/blob/main/toolchain/toolchain.json). Lockfile only; the full e2e suite of this site runs on this PR.
 
 Opened by \`toolchain/bump-playwright.sh\`."
   )
