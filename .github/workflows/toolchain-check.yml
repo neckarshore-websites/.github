@@ -1,0 +1,36 @@
+# Reusable workflow: holds the calling website to the estate's Playwright
+# version in toolchain/toolchain.json of this repository.
+#
+# A website calls it with a three-line job (see toolchain/README.md). The
+# number and the checker are read from main of this repository on every
+# run, so a bump here reaches every site on its next push, pull request or
+# weekly run.
+name: toolchain-check
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  playwright:
+    name: Playwright version matches the estate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the website
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the estate number and the checker
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: neckarshore-websites/.github
+          ref: main
+          path: .estate-toolchain
+          persist-credentials: false
+
+      - name: Compare package.json and package-lock.json with the estate number
+        run: node .estate-toolchain/toolchain/check-playwright.mjs .estate-toolchain/toolchain/toolchain.json
