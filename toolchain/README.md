@@ -7,7 +7,7 @@ Every website in this organisation pins Playwright exactly. Without a shared num
 | # | Part | File | What it does |
 |---|------|------|--------------|
 | 1 | The number | `toolchain.json` | `playwright` is the estate version; `sites` lists the websites that follow it. |
-| 2 | The check | `check-playwright.mjs`, `../.github/workflows/toolchain-check.yml` | Each site runs it on every pull request, every push to `main` and once a week. It reads `package.json` and every Playwright entry in `package-lock.json` (what CI actually installs) and fails when one differs from the number. |
+| 2 | The check | `check-playwright.mjs`, `../.github/workflows/toolchain-check.yml` | Each site runs it on every pull request, every push to `main` and once a week. It reads `package.json` and every Playwright entry in `package-lock.json` (what CI actually installs) and fails when one differs from the number. It also fails when a workflow or an npm script installs Playwright's system packages (`--with-deps`, `install-deps`); see below. |
 | 3 | The bump | `bump-playwright.sh` | Opens one pull request per site that moves it to a new number. Preview by default; `--apply` pushes. |
 
 ## A site joins
@@ -39,8 +39,15 @@ Then add the site to `sites` (A to Z). A site with Dependabot gets `ignore` entr
 3. Merge `toolchain.json` first. From then on every site is red until its own bump merges; that is the signal, not a fault.
 4. Merge the site pull requests once each site's own e2e suite is green.
 
+## No system packages
+
+Since 2026-11-19 (Founder, "Ja, bauen") the check also refuses `playwright install --with-deps` and `playwright install-deps` in `.github/workflows/*.yml` and in the `scripts` of `package.json`. On 2026-11-06 the flag was the cause of the slow E2E runs: it installs nine font packages from an Ubuntu mirror that was slow in 26 of 524 runs. It was removed from seven sites, and Chromium runs without those packages on GitHub's `ubuntu-latest`. The rule keeps it from returning by copy. A YAML comment that names the flag is allowed.
+
+The fix is the browser only: `npx playwright install chromium`.
+
 ## Limits
 
 - **Red is visible, not blocking,** until the check is a required status check on a site's `main`. That is a repository setting.
 - **Not covered yet:** `logibright-website` (not on the website persona's write list on 2026-11-06) and `pet-foster-finder` (parked by the Founder on 2026-11-03).
-- The check holds the version only. Whether a site's tests pass on it is the site's own e2e suite.
+- The check holds the version and the install line only. Whether a site's tests pass on it is the site's own e2e suite.
+- The system-package rule reads `.github/workflows/` and `package.json` scripts. A shell script under `scripts/` or a composite action under `.github/actions/` that installs them is not read.

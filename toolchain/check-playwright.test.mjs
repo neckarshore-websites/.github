@@ -1,12 +1,12 @@
 // Tests for check-playwright.mjs. Run: node --test toolchain/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { checkPlaywright } from "./check-playwright.mjs";
+import { checkPlaywright, checkSystemDeps } from "./check-playwright.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "check-playwright.mjs");
 
@@ -70,11 +70,17 @@ test("a lockfile without a packages map fails", () => {
   assert.equal(r.ok, false);
 });
 
-function runCli(toolchain, packageJson, packageLock) {
+function runCli(toolchain, packageJson, packageLock, workflows = {}) {
   const dir = mkdtempSync(join(tmpdir(), "toolchain-"));
   writeFileSync(join(dir, "toolchain.json"), JSON.stringify(toolchain));
   if (packageJson) writeFileSync(join(dir, "package.json"), JSON.stringify(packageJson));
   if (packageLock) writeFileSync(join(dir, "package-lock.json"), JSON.stringify(packageLock));
+  if (Object.keys(workflows).length) {
+    mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
+    for (const [name, content] of Object.entries(workflows)) {
+      writeFileSync(join(dir, ".github", "workflows", name), content);
+    }
+  }
   return spawnSync(process.execPath, [SCRIPT, join(dir, "toolchain.json")], { cwd: dir, encoding: "utf8" });
 }
 
@@ -99,6 +105,81 @@ test("cli: exit 2 when toolchain.json carries no exact version", () => {
 test("cli: exit 2 when the lockfile is missing", () => {
   const r = runCli({ playwright: "1.64.1" }, pkg("1.64.1"), null);
   assert.equal(r.status, 2);
+});
+
+// --- Second rule: no install of Playwright's system packages ---------------
+
+const E2E_OK = `jobs:
+  e2e:
+    steps:
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+`;
+
+test("system deps: the browser-only install passes", () => {
+  const r = checkSystemDeps({ files: [{ path: ".github/workflows/e2e.yml", content: E2E_OK }] });
+  assert.equal(r.ok, true);
+});
+
+test("system deps: --with-deps in a run step fails with file and line", () => {
+  const content = E2E_OK.replace("install chromium", "install --with-deps chromium");
+  const r = checkSystemDeps({ files: [{ path: ".github/workflows/e2e.yml", content }] });
+  assert.equal(r.ok, false);
+  assert.equal(r.problems[0].file, ".github/workflows/e2e.yml");
+  assert.equal(r.problems[0].line, 5);
+});
+
+test("system deps: --with-deps after the browser name fails too", () => {
+  const content = E2E_OK.replace("install chromium", "install chromium --with-deps");
+  assert.equal(checkSystemDeps({ files: [{ path: "w.yml", content }] }).ok, false);
+});
+
+test("system deps: inside a multi-line run block fails", () => {
+  const content = `jobs:
+  e2e:
+    steps:
+      - run: |
+          npm ci
+          npx playwright install --with-deps
+`;
+  const r = checkSystemDeps({ files: [{ path: "w.yml", content }] });
+  assert.equal(r.ok, false);
+  assert.equal(r.problems[0].line, 6);
+});
+
+test("system deps: playwright install-deps fails", () => {
+  const content = E2E_OK.replace("install chromium", "install-deps");
+  assert.equal(checkSystemDeps({ files: [{ path: "w.yml", content }] }).ok, false);
+});
+
+test("system deps: a YAML comment that names the flag passes", () => {
+  const content = `# --with-deps was dropped on 2026-11-06 (slow font mirror).\n${E2E_OK}`;
+  assert.equal(checkSystemDeps({ files: [{ path: "w.yml", content }] }).ok, true);
+});
+
+test("system deps: an npm script with --with-deps fails", () => {
+  const r = checkSystemDeps({ scripts: { "e2e:setup": "playwright install --with-deps chromium" } });
+  assert.equal(r.ok, false);
+  assert.match(r.problems[0].message, /script "e2e:setup"/);
+});
+
+test("cli: exit 1 and a fix line when a workflow installs system packages", () => {
+  const r = runCli({ playwright: "1.64.1" }, pkg("1.64.1"), lock("1.64.1"), {
+    "e2e.yml": E2E_OK.replace("install chromium", "install --with-deps chromium"),
+  });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /::error file=\.github\/workflows\/e2e\.yml,line=5::/);
+  assert.match(r.stdout, /npx playwright install chromium \(no --with-deps\)/);
+  assert.doesNotMatch(r.stdout, /npm install --save-dev/);
+});
+
+test("cli: exit 0 names how many workflows it read", () => {
+  const r = runCli({ playwright: "1.64.1" }, pkg("1.64.1"), lock("1.64.1"), {
+    "e2e.yml": E2E_OK,
+    "toolchain.yml": "jobs: {}\n",
+  });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /no system-package install in 2 workflows/);
 });
 
 // The estate number itself. A typo here turns every site's check red at once.
