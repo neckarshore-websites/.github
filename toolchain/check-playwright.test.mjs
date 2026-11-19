@@ -157,6 +157,37 @@ test("system deps: a YAML comment that names the flag passes", () => {
   assert.equal(checkSystemDeps({ files: [{ path: "w.yml", content }] }).ok, true);
 });
 
+test("system deps: a version-qualified install-deps fails", () => {
+  const content = E2E_OK.replace("npx playwright install chromium", "npx playwright@1.64.1 install-deps");
+  assert.equal(checkSystemDeps({ files: [{ path: "w.yml", content }] }).ok, false);
+  const r = checkSystemDeps({ scripts: { setup: "npx playwright@1.64.1 install-deps" } });
+  assert.equal(r.ok, false);
+});
+
+test("system deps: install-deps split over a folded run block fails, on its line", () => {
+  const content = `jobs:
+  e2e:
+    steps:
+      - run: >
+          npx playwright
+          install-deps
+`;
+  const r = checkSystemDeps({ files: [{ path: "w.yml", content }] });
+  assert.equal(r.ok, false);
+  assert.equal(r.problems.length, 1);
+  assert.equal(r.problems[0].line, 6);
+});
+
+test("system deps: a trailing YAML comment that names the flag passes", () => {
+  const content = E2E_OK.replace("install chromium", "install chromium # no --with-deps (2026-11-06)");
+  assert.equal(checkSystemDeps({ files: [{ path: "w.yml", content }] }).ok, true);
+});
+
+test("system deps: the flag before a trailing comment still fails", () => {
+  const content = E2E_OK.replace("install chromium", "install --with-deps chromium # fonts");
+  assert.equal(checkSystemDeps({ files: [{ path: "w.yml", content }] }).ok, false);
+});
+
 test("system deps: an npm script with --with-deps fails", () => {
   const r = checkSystemDeps({ scripts: { "e2e:setup": "playwright install --with-deps chromium" } });
   assert.equal(r.ok, false);

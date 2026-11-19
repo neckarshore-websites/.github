@@ -86,25 +86,41 @@ export function checkPlaywright({ expected, packageJson, packageLock }) {
   return { ok: problems.length === 0, problems, seen };
 }
 
-// Matches the two ways of installing Playwright's system packages.
-const SYSTEM_DEPS = /--with-deps\b|\bplaywright\s+install-deps\b/;
+// Matches the two ways of installing Playwright's system packages. The
+// optional @version covers `npx playwright@1.64.1 install-deps`.
+const SYSTEM_DEPS = /--with-deps\b|\bplaywright(?:@\S+)?\s+install-deps\b/;
+// The same install-deps call split over two lines, as a folded (`>`) run
+// block joins them into one command.
+const SYSTEM_DEPS_SPLIT = /\bplaywright(?:@\S+)?[ \t]*\n[ \t]*install-deps\b/g;
+
+// YAML comments: a whole comment line, or " # ..." after the content (YAML
+// needs whitespace before a trailing "#"). A workflow may still explain why
+// the flag is gone. A "#" inside a quoted string is cut too; that can only
+// hide a match, never invent one.
+function withoutComment(line) {
+  if (line.trimStart().startsWith("#")) return "";
+  return line.replace(/\s#.*$/, "");
+}
 
 // files: [{ path, content }] for every workflow; scripts: package.json scripts.
-// A line whose first non-blank character is "#" is a YAML comment and is
-// skipped, so a workflow may still explain why the flag is gone.
 export function checkSystemDeps({ files = [], scripts = {} }) {
   const problems = [];
-  for (const { path, content } of files) {
-    content.split("\n").forEach((line, i) => {
-      if (line.trimStart().startsWith("#")) return;
-      if (SYSTEM_DEPS.test(line)) {
-        problems.push({
-          file: path,
-          line: i + 1,
-          message: `installs Playwright's system packages (${line.trim()}); use "npx playwright install chromium" without --with-deps`,
-        });
-      }
+  const report = (path, lineNo, text) =>
+    problems.push({
+      file: path,
+      line: lineNo,
+      message: `installs Playwright's system packages (${text.trim()}); use "npx playwright install chromium" without --with-deps`,
     });
+  for (const { path, content } of files) {
+    const lines = content.split("\n").map(withoutComment);
+    lines.forEach((line, i) => {
+      if (SYSTEM_DEPS.test(line)) report(path, i + 1, line);
+    });
+    const text = lines.join("\n");
+    for (const m of text.matchAll(SYSTEM_DEPS_SPLIT)) {
+      const lineNo = text.slice(0, m.index + m[0].length).split("\n").length;
+      report(path, lineNo, m[0].replace(/\s+/g, " "));
+    }
   }
   for (const [name, command] of Object.entries(scripts)) {
     if (typeof command === "string" && SYSTEM_DEPS.test(command)) {
