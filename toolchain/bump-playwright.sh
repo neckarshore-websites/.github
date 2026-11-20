@@ -47,7 +47,26 @@ for site in $sites; do
     echo "   already on $version, nothing to do"
     continue
   fi
-  (cd "$dir" && npm install --package-lock-only --save-dev --save-exact --ignore-scripts --no-audit --no-fund "@playwright/test@$version" >/dev/null)
+  # Every Playwright package the site pins moves together: a site that also
+  # pins "playwright" (oakwoodgolfclub-website, 2026-11-20) would otherwise
+  # keep it on the old number and the check below would refuse the bump.
+  pkgs=$(cd "$dir" && node -e '
+    const p = require("./package.json");
+    const all = { ...p.dependencies, ...p.devDependencies };
+    const names = ["@playwright/test", "playwright", "playwright-core"].filter((n) => n in all);
+    console.log(names.map((n) => n + "@" + process.argv[1]).join(" "));
+  ' "$version")
+  if [[ -z "$pkgs" ]]; then
+    echo "   no Playwright package in package.json, skipped"
+    continue
+  fi
+  # shellcheck disable=SC2086 # one word per package
+  # npm's peer-dependency warnings are noise here; its output is shown only
+  # when the install itself fails.
+  if ! (cd "$dir" && npm install --package-lock-only --save-dev --save-exact --ignore-scripts --no-audit --no-fund $pkgs >"$work/npm-$site.log" 2>&1); then
+    cat "$work/npm-$site.log" >&2
+    exit 1
+  fi
   (cd "$dir" && node "$here/check-playwright.mjs" "$work/target.json")
   (cd "$dir" && git --no-pager diff --stat)
   if [[ "$apply" != "--apply" ]]; then
@@ -62,10 +81,14 @@ for site in $sites; do
 
 Moves @playwright/test, playwright and playwright-core to $version as set in
 neckarshore-websites/.github toolchain/toolchain.json, so every website uses
-one browser build. Opened by toolchain/bump-playwright.sh."
+one browser build. Opened by toolchain/bump-playwright.sh.${BUMP_COMMIT_TRAILER:+
+
+$BUMP_COMMIT_TRAILER}"
     git push -q -u origin "$branch"
     gh pr create --repo "$org/$site" --base main --head "$branch" --title "chore(test): Playwright $version, the estate number" --body "Moves Playwright to **$version**, the number in [toolchain.json](https://github.com/$org/.github/blob/main/toolchain/toolchain.json). Lockfile only; the full e2e suite of this site runs on this PR.
 
-Opened by \`toolchain/bump-playwright.sh\`."
+Opened by \`toolchain/bump-playwright.sh\`.${BUMP_PR_FOOTER:+
+
+$BUMP_PR_FOOTER}"
   )
 done
