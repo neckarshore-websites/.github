@@ -8,7 +8,7 @@ Every website in this organisation pins Playwright exactly. Without a shared num
 |---|------|------|--------------|
 | 1 | The number | `toolchain.json` | `playwright` is the estate version; `sites` lists the websites that follow it. |
 | 2 | The check | `check-playwright.mjs`, `../.github/workflows/toolchain-check.yml` | Each site runs it on every pull request, every push to `main` and once a week. It reads `package.json` and every Playwright entry in `package-lock.json` (what CI actually installs) and fails when one differs from the number. It also fails when a workflow or an npm script installs Playwright's system packages (`--with-deps`, `install-deps`); see below. |
-| 3 | The bump | `bump-playwright.sh` | Opens one pull request per site that moves it to a new number. Preview by default; `--apply` pushes. |
+| 3 | The bump | `bump-playwright.sh` | Opens one pull request per site that moves it to a new number, with every Playwright package the site pins (`@playwright/test`, `playwright`, `playwright-core`). Preview by default; `--apply` pushes. `BUMP_COMMIT_TRAILER` and `BUMP_PR_FOOTER`, when set, are appended to each commit message and pull request body. |
 
 ## A site joins
 
