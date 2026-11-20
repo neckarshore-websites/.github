@@ -14,8 +14,16 @@
 // @playwright/test, playwright and playwright-core in it, plus the exact
 // pin in package.json. Exit 0 when all match, 1 on any mismatch, 2 when
 // the inputs cannot be read.
+//
+// Second rule (Founder 2026-11-19, "Ja, bauen"): no workflow and no npm
+// script may install Playwright's system packages, that is
+// `playwright install --with-deps` or `playwright install-deps`. On
+// 2026-11-06 that flag was behind the slow E2E runs (nine font packages from
+// a slow Ubuntu mirror, 26 of 524 runs) and was removed from seven sites. The
+// browser runs without those packages on GitHub's ubuntu-latest. This rule
+// keeps the flag from coming back by copy from an old workflow or a tutorial.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -78,6 +86,62 @@ export function checkPlaywright({ expected, packageJson, packageLock }) {
   return { ok: problems.length === 0, problems, seen };
 }
 
+// Matches the two ways of installing Playwright's system packages. The
+// optional @version covers `npx playwright@1.64.1 install-deps`.
+const SYSTEM_DEPS = /--with-deps\b|\bplaywright(?:@\S+)?\s+install-deps\b/;
+// The same install-deps call split over two lines, as a folded (`>`) run
+// block joins them into one command.
+const SYSTEM_DEPS_SPLIT = /\bplaywright(?:@\S+)?[ \t]*\n[ \t]*install-deps\b/g;
+
+// YAML comments: a whole comment line, or " # ..." after the content (YAML
+// needs whitespace before a trailing "#"). A workflow may still explain why
+// the flag is gone. A "#" inside a quoted string is cut too; that can only
+// hide a match, never invent one.
+function withoutComment(line) {
+  if (line.trimStart().startsWith("#")) return "";
+  return line.replace(/\s#.*$/, "");
+}
+
+// files: [{ path, content }] for every workflow; scripts: package.json scripts.
+export function checkSystemDeps({ files = [], scripts = {} }) {
+  const problems = [];
+  const report = (path, lineNo, text) =>
+    problems.push({
+      file: path,
+      line: lineNo,
+      message: `installs Playwright's system packages (${text.trim()}); use "npx playwright install chromium" without --with-deps`,
+    });
+  for (const { path, content } of files) {
+    const lines = content.split("\n").map(withoutComment);
+    lines.forEach((line, i) => {
+      if (SYSTEM_DEPS.test(line)) report(path, i + 1, line);
+    });
+    const text = lines.join("\n");
+    for (const m of text.matchAll(SYSTEM_DEPS_SPLIT)) {
+      const lineNo = text.slice(0, m.index + m[0].length).split("\n").length;
+      report(path, lineNo, m[0].replace(/\s+/g, " "));
+    }
+  }
+  for (const [name, command] of Object.entries(scripts)) {
+    if (typeof command === "string" && SYSTEM_DEPS.test(command)) {
+      problems.push({
+        file: "package.json",
+        message: `script "${name}" installs Playwright's system packages (${command}); drop --with-deps`,
+      });
+    }
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+function readWorkflows(root) {
+  const dir = join(root, ".github", "workflows");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
+    .sort()
+    .map((f) => ({ path: `.github/workflows/${f}`, content: readFileSync(join(dir, f), "utf8") }));
+}
+
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
@@ -103,15 +167,33 @@ function main(argv) {
     return 2;
   }
 
-  const { ok, problems, seen } = checkPlaywright({ expected, packageJson, packageLock });
-  if (ok) {
-    console.log(`ok: Playwright ${expected} in package.json and in ${seen.length} lockfile entries`);
+  const version = checkPlaywright({ expected, packageJson, packageLock });
+  let workflows;
+  try {
+    workflows = readWorkflows(process.cwd());
+  } catch (err) {
+    console.error(`::error::cannot read .github/workflows: ${err.message}`);
+    return 2;
+  }
+  const deps = checkSystemDeps({ files: workflows, scripts: packageJson.scripts ?? {} });
+
+  if (version.ok && deps.ok) {
+    console.log(`ok: Playwright ${expected} in package.json and in ${version.seen.length} lockfile entries`);
+    console.log(`ok: no system-package install in ${workflows.length} workflows and the npm scripts`);
     return 0;
   }
-  for (const p of problems) console.log(`::error file=${p.file}::${p.message}`);
+  for (const p of [...version.problems, ...deps.problems]) {
+    const where = p.line ? `file=${p.file},line=${p.line}` : `file=${p.file}`;
+    console.log(`::error ${where}::${p.message}`);
+  }
   console.log("");
-  console.log(`Fix: npm install --save-dev --save-exact @playwright/test@${expected}`);
-  console.log("Then commit package.json and package-lock.json.");
+  if (!version.ok) {
+    console.log(`Fix: npm install --save-dev --save-exact @playwright/test@${expected}`);
+    console.log("Then commit package.json and package-lock.json.");
+  }
+  if (!deps.ok) {
+    console.log("Fix: install the browser only, npx playwright install chromium (no --with-deps).");
+  }
   return 1;
 }
 
