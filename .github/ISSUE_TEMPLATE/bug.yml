@@ -1,0 +1,35 @@
+name: Bug
+description: Something on the site is wrong or broken.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What is wrong
+      description: The page, what it does, and what it should do instead.
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: The full address of the page, or the file and line.
+      placeholder: https://example.com/kontakt
+  # Website test plan, gap row 16: which check found a defect can only be measured
+  # if every defect records it. Keep the options stable; they are counted.
+  - type: dropdown
+    id: found-by
+    attributes:
+      label: Found by
+      description: Who or what noticed it first.
+      options:
+        - A required CI check on a pull request
+        - A scheduled or live check (after deploy, nightly, weekly)
+        - A reviewer on a pull request (person or bot)
+        - The Founder
+        - A customer or site owner
+        - A visitor
+        - By chance, while doing something else
+        - Unknown
+    validations:
+      required: true
